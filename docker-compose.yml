@@ -1,0 +1,45 @@
+services:
+       vm1:
+         build:
+           context: ./app
+           dockerfile: Dockerfile
+         container_name: vm1
+         ports:
+           - "31001:3000"
+         deploy:
+           resources:
+             limits:
+               cpus: '1'
+               memory: 512m
+         healthcheck:
+           test: ["CMD", "curl", "-f", "http://localhost:3000/api/a"]
+           interval: 10s
+           timeout: 5s
+           retries: 3
+           start_period: 10s
+         networks:
+           - ts-network
+
+       vm2:
+         build:
+           context: ./app
+           dockerfile: Dockerfile
+         container_name: vm2
+         ports:
+           - "31002:3000"
+         deploy:
+           resources:
+             limits:
+               cpus: '1'
+               memory: 1024m
+         healthcheck:
+           test: ["CMD", "curl", "-f", "http://localhost:3000/api/a"]
+           interval: 10s
+           timeout: 5s
+           retries: 3
+           start_period: 10s
+         networks:
+               - ts-network
+networks:
+      ts-network:
+        driver: bridge
