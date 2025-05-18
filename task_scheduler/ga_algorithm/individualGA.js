@@ -4,15 +4,95 @@
  */
 class Chromosome {
   /**
-   * Constructor
-   * @param {number} id - Unique identifier for the chromosome
-   * @param {Array<number>} genes - The solution represented by this chromosome
+   * Constructor with chromosome length
+   * @param {number} chromosomeLength - The length of the chromosome
    */
-  constructor(id, genes) {
-    this.id = id || -1;
-    this.genes = genes || [];
+  constructor(chromosomeLength) {
+    this.id = -1; // Default ID if not provided
+    this.genes = new Array(chromosomeLength || 0).fill(0);
     this.fitness = 0.0;
-    this.velocity = new Array(genes ? genes.length : 0).fill(0);
+    this.velocity = new Array(chromosomeLength || 0).fill(0);
+  }
+
+  /**
+   * Constructor with ID and genes
+   * @param {number} id - The unique identifier for this chromosome
+   * @param {Array<number>} genes - The chromosome genes (solution)
+   */
+  static withIdAndGenes(id, genes) {
+    const chromosome = new Chromosome(genes.length);
+    chromosome.id = id;
+    chromosome.genes = [...genes];
+    return chromosome;
+  }
+
+  /**
+   * Get the ID of this chromosome
+   * @return {number} The chromosome ID
+   */
+  getId() {
+    return this.id;
+  }
+
+  /**
+   * Set the ID of this chromosome
+   * @param {number} id - The new ID
+   */
+  setId(id) {
+    this.id = id;
+  }
+
+  /**
+   * Get the genes of this chromosome
+   * @return {Array<number>} The chromosome genes
+   */
+  getGenes() {
+    return this.genes;
+  }
+
+  /**
+   * Set the genes of this chromosome
+   * @param {Array<number>} genes - The new genes
+   */
+  setGenes(genes) {
+    this.genes = genes;
+  }
+
+  /**
+   * Get the fitness value of this chromosome
+   * @return {number} The fitness value
+   */
+  getFitness() {
+    return this.fitness;
+  }
+
+  /**
+   * Set the fitness value of this chromosome
+   * @param {number} fitness - The new fitness value
+   */
+  setFitness(fitness) {
+    this.fitness = fitness;
+  }
+
+  /**
+   * Get the velocity array of this chromosome
+   * @return {Array<number>} The velocity array
+   */
+  getVelocity() {
+    return this.velocity;
+  }
+
+  /**
+   * Set the velocity for a specific index
+   * @param {number} index - The index in the velocity array
+   * @param {number} value - The new velocity value
+   */
+  setVelocity(index, value) {
+    if (index >= 0 && index < this.velocity.length) {
+      this.velocity[index] = value;
+    } else {
+      throw new Error("Index out of bounds for velocity array.");
+    }
   }
 
   /**
@@ -46,7 +126,7 @@ class Chromosome {
    * @return {Chromosome} A deep copy of this chromosome
    */
   clone() {
-    const clone = new Chromosome(this.id, [...this.genes]);
+    const clone = Chromosome.withIdAndGenes(this.id, this.genes);
     clone.fitness = this.fitness;
     clone.velocity = [...this.velocity];
     return clone;

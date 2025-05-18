@@ -1,10 +1,8 @@
-index.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { geneticAlgorithm } = require('./ga_algorithm/ga');
-// const { runMOICS } = require('./moics/runMOICS')
+const { runGeneticAlgorithm } = require('./ga_algorithm/indexGA');
 
 const app = express();
 app.use(express.json());
@@ -19,9 +17,6 @@ const workers = [
   'http://192.168.56.13:31002'
 ];
 
-// Round Robin Disabled
-// let currentWorker = 0;
-
 let makespanStart = null;
 let makespanEnd = null;
 let completedTasks = 0;
@@ -35,28 +30,29 @@ const executionTimes = [];
 const executionTimeByWorker = {};
 
 let tasks = [];
-let gaMapping = []; // 🔄 Hasil GA Algorithm: mapping index task -> index worker
-let moicsMapping = [];
+let gaMapping = []; // 🧬 Hasil Genetic Algorithm: mapping index task -> index worker
 
 // Load tasks
 try {
-  const data = fs.readFileSync(path.join(__dirname, 'tasks500.json'));
+  const data = fs.readFileSync(path.join(__dirname, 'task50.json'));
   tasks = JSON.parse(data);
+  console.log(`✅ Successfully loaded ${tasks.length} tasks from task50.json`);
 } catch (err) {
-  console.error('Gagal membaca tasks.json:', err.message);
+  console.error('❌ Gagal membaca task50.json:', err.message);
   process.exit(1);
 }
 
-// Endpoint penjadwalan menggunakan GA Algorithm
+// Endpoint penjadwalan menggunakan Genetic Algorithm
 app.post('/schedule', async (req, res) => {
-  // Jalankan GA Algorithm saat pertama kali
+  // Jalankan Genetic Algorithm saat pertama kali
   if (gaMapping.length === 0) {
-    gaMapping = geneticAlgorithm(tasks.length, workers.length); // 🔄 Menjalankan GA Algorithm untuk mapping
-    console.log('📌 GA Algorithm mapping:', gaMapping);
-
+    console.log('🧬 Running Genetic Algorithm...');
+    gaMapping = runGeneticAlgorithm(tasks.length, workers.length);
+    console.log('🧬 Genetic Algorithm mapping:', gaMapping);
+    
     // Debug jika mapping kosong
     if (!Array.isArray(gaMapping) || gaMapping.length !== tasks.length) {
-      console.error(`❌ Invalid mapping: expected ${tasks.length} entries, got ${gaMapping.length}`);
+      console.error(`❌ Invalid GA mapping: expected ${tasks.length} entries, got ${gaMapping.length}`);
       process.exit(1);
     }
   }
@@ -68,8 +64,8 @@ app.post('/schedule', async (req, res) => {
   }
 
   const task = tasks[currentIndex];
-  const targetIndex = gaMapping[currentIndex]; // 🔄 Alokasi berdasarkan GA Algorithm
-  const targetWorker = workers[targetIndex];
+  const targetIndex = gaMapping[currentIndex]; // 🧬 Alokasi berdasarkan Genetic Algorithm
+  const targetWorker = workers[targetIndex % workers.length]; // Ensure index is valid
   currentIndex++;
 
   if (!makespanStart) {
@@ -78,7 +74,7 @@ app.post('/schedule', async (req, res) => {
 
   try {
     // Menambahkan informasi task yang akan diproses
-    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.type }); // Mengirim task berdasarkan type
+    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.type });
 
     const workerURL = targetWorker;
     const startTime = response.data?.result?.start_time || 0;
@@ -124,23 +120,23 @@ app.post('/schedule', async (req, res) => {
       console.log(`📊 Average Finish Time: ${avgFinish.toFixed(2)} ms`);
       console.log(`📊 Average Execution Time: ${avgExec.toFixed(2)} ms`);
       console.log(`⚖️ Imbalance Degree: ${imbalanceDegree.toFixed(3)}`);
-      console.log(`💲 Total Cost: $${totalCost}`);
+      console.log(`💲 Total Cost: $${totalCost.toFixed(2)}`);
     }
 
     res.json({
       status: 'sent',
-      task: task.name,
+      task: task.name || task.type,
       weight: task.weight,
       worker: targetWorker,
       result: response.data
     });
 
   } catch (err) {
-    console.error(`Gagal mengirim task ke ${targetWorker}:`, err.message);
+    console.error(`❌ Gagal mengirim task ke ${targetWorker}:`, err.message);
     res.status(500).json({
       error: 'Worker unreachable',
       worker: targetWorker,
-      task: task.name,
+      task: task.name || task.type,
       weight: task.weight
     });
   }
@@ -152,7 +148,6 @@ app.post('/reset', (req, res) => {
   makespanStart = null;
   makespanEnd = null;
   gaMapping = [];
-  moicsMapping = [];
   startTimes.length = 0;
   finishTimes.length = 0;
   executionTimes.length = 0;
@@ -163,5 +158,5 @@ app.post('/reset', (req, res) => {
 });
 
 app.listen(8080, () => {
-  console.log('🚀 Broker running on port 8080 (GA ALGORITHM ENABLED)');
+  console.log('🚀 Broker running on port 8080 (GENETIC ALGORITHM ENABLED)');
 });
