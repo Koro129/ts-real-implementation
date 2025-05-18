@@ -21,7 +21,7 @@ const workers = [
 let makespanStart = null;
 let makespanEnd = null;
 let completedTasks = 0;
-const totalTasks = 50;
+let totalTasks = 0; // Will be set dynamically based on tasks.length
 let currentIndex = 0;
 let totalCost = 0;
 
@@ -37,7 +37,9 @@ let gaMapping = []; // 🧬 Hasil Genetic Algorithm: mapping index task -> index
 try {
   const data = fs.readFileSync(path.join(__dirname, 'task50.json'));
   tasks = JSON.parse(data);
+  totalTasks = tasks.length; // Set totalTasks to match the actual number of tasks
   console.log(`✅ Successfully loaded ${tasks.length} tasks from task50.json`);
+  console.log(`✅ Total tasks to process: ${totalTasks}`);
 } catch (err) {
   console.error('❌ Gagal membaca task50.json:', err.message);
   process.exit(1);
@@ -126,6 +128,7 @@ app.post('/schedule', async (req, res) => {
     executionTimeByWorker[workerURL] += execTime;
 
     completedTasks++;
+    console.log(`✅ Task ${completedTasks}/${totalTasks} completed`);
 
     if (completedTasks === totalTasks) {
       makespanEnd = Date.now();
@@ -144,7 +147,8 @@ app.post('/schedule', async (req, res) => {
       const Tmin = Math.min(...allExecs);
       const imbalanceDegree = (Tmax - Tmin) / Tavg;
 
-      console.log(`✅ All tasks completed.`);
+      console.log(`\n🎉 FINAL RESULTS FOR GENETIC ALGORITHM 🎉`);
+      console.log(`✅ All ${totalTasks} tasks completed.`);
       console.log(`🕒 Makespan: ${makespanDurationSec.toFixed(2)} detik`);
       console.log(`📈 Throughput: ${throughput.toFixed(2)} tugas/detik`);
       console.log(`📊 Average Start Time: ${avgStart.toFixed(2)} ms`);
