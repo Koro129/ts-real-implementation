@@ -2,7 +2,8 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { runGeneticAlgorithm } = require('./ga_algorithm/indexGA');
+const { GeneticAlgorithm, geneticAlgorithm } = require('./ga_algorithm/ga');
+const { PopulationGA } = require('./ga_algorithm/populationGA');
 
 const app = express();
 app.use(express.json());
@@ -42,6 +43,36 @@ try {
   process.exit(1);
 }
 
+/**
+ * Run the Genetic Algorithm for task scheduling
+ * @param {number} taskCount - Number of tasks to schedule
+ * @param {number} workerCount - Number of available workers
+ * @return {Array<number>} Array of worker assignments for each task
+ */
+function runGeneticAlgorithm(taskCount, workerCount) {
+  const populationSize = 10;
+  const iterations = 5;
+  const crossoverProbability = 0.8;
+  const mutationProbability = 0.1;
+  
+  // Method 1: Using BAT-compatible function (simple)
+  const population = [];
+  for (let i = 0; i < populationSize; i++) {
+    const position = [];
+    for (let j = 0; j < taskCount; j++) {
+      position.push(Math.floor(Math.random() * workerCount));
+    }
+    population.push({
+      position: position,
+      velocity: new Array(taskCount).fill(0),
+      fitness: 0
+    });
+  }
+  
+  // Run the Genetic Algorithm through BAT-compatible interface
+  return geneticAlgorithm(population, iterations);
+}
+
 // Endpoint penjadwalan menggunakan Genetic Algorithm
 app.post('/schedule', async (req, res) => {
   // Jalankan Genetic Algorithm saat pertama kali
@@ -74,7 +105,7 @@ app.post('/schedule', async (req, res) => {
 
   try {
     // Menambahkan informasi task yang akan diproses
-    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.type });
+    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.type }); // Mengirim task berdasarkan type
 
     const workerURL = targetWorker;
     const startTime = response.data?.result?.start_time || 0;
