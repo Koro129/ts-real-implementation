@@ -1,282 +1,293 @@
-const { Chromosome } = require('./individualGA');
-const { PopulationGA } = require('./populationGA');
+const { cloneDeep } = require('lodash');
+
+// Constants for GA parameters
+const DEFAULT_POPULATION_SIZE = 30;
+const DEFAULT_ITERATIONS = 50;
+const DEFAULT_CROSSOVER_PROBABILITY = 0.8;
+const DEFAULT_MUTATION_PROBABILITY = 0.1;
+
+// Constants for cost and task calculations (from moics.js)
+const WEIGHT_TO_MIPS = {
+  ringan: 400,
+  sedang: 500,
+  berat: 600,
+};
+const COST_PER_MIPS = 0.5;
+const COST_PER_RAM = 0.05;
+const COST_PER_BW = 0.1;
+const BANDWIDTH_USAGE = 1000;
+const CLOUDLET_LENGTH = 10000;
+const RAM_USAGE = 512;
+
+// Define task weights for simulation
+const TASK_WEIGHTS = ['ringan', 'sedang', 'berat'];
 
 /**
- * Implementation of the Genetic Algorithm for VM allocation in cloud computing
+ * Create a single individual (chromosome) for the GA
+ * @param {number} taskCount - Number of tasks
+ * @param {number} workerCount - Number of workers
+ * @return {Object} Individual with chromosome and fitness
  */
-class GeneticAlgorithm {
-  /**
-   * Constructor
-   * @param {number} maxIterations - Maximum number of iterations
-   * @param {number} populationSize - Population size
-   * @param {number} crossoverProbability - Probability of crossover
-   * @param {number} mutationProbability - Probability of mutation
-   * @param {number} chromosomeLength - Length of each chromosome
-   */
-  constructor(maxIterations, populationSize, crossoverProbability, mutationProbability, chromosomeLength) {
-    this.maxIterations = maxIterations;
-    this.populationSize = populationSize;
-    this.crossoverProbability = crossoverProbability;
-    this.mutationProbability = mutationProbability;
-    this.chromosomeLength = chromosomeLength;
-    
-    this.numberOfDataCenters = 1; // Simplified for our case
-    this.globalBestFitnesses = new Array(this.numberOfDataCenters).fill(-Infinity);
-    this.globalBestPositions = new Array(this.numberOfDataCenters);
-    
-    for (let i = 0; i < this.numberOfDataCenters; i++) {
-      this.globalBestPositions[i] = new Array(chromosomeLength).fill(0);
-    }
+function createIndividual(taskCount, workerCount) {
+  const chromosome = Array.from(
+    { length: taskCount }, 
+    () => Math.floor(Math.random() * workerCount)
+  );
+  return {
+    chromosome,
+    fitness: Infinity
+  };
+}
+
+/**
+ * Create initial population for GA
+ * @param {number} populationSize - Size of population
+ * @param {number} taskCount - Number of tasks
+ * @param {number} workerCount - Number of workers
+ * @return {Array} Population of individuals
+ */
+function createInitialPopulation(populationSize, taskCount, workerCount) {
+  return Array.from(
+    { length: populationSize }, 
+    () => createIndividual(taskCount, workerCount)
+  );
+}
+
+/**
+ * Calculate fitness for an individual based on makespan and cost
+ * @param {Object} individual - The individual to evaluate
+ * @param {Array} tasks - Task information including weights (REQUIRED)
+ * @return {number} Fitness value
+ * @throws {Error} If tasks are not provided
+ */
+function calculateFitness(individual, tasks) {
+  if (!tasks || !Array.isArray(tasks)) {
+    throw new Error("Tasks array is required for fitness calculation");
   }
   
-  /**
-   * Initialize population
-   * @param {number} chromosomeLength - Length of each chromosome
-   * @param {number} dataCenterIterator - Index of the datacenter being processed
-   * @return {PopulationGA} The initialized population
-   */
-  initPopulation(chromosomeLength, dataCenterIterator) {
-    return new PopulationGA(this.populationSize, chromosomeLength, dataCenterIterator);
-  }
+  const workerLoad = {}; // total time per worker
+  const workerCost = {};
   
-  /**
-   * Compute fitness for all chromosomes in the population
-   * @param {PopulationGA} population - The population
-   * @param {number} dataCenterIterator - Index of the datacenter being processed
-   */
-  computeFitness(population, dataCenterIterator) {
-    const chromosomes = population.getChromosomes();
-    for (let chromosome of chromosomes) {
-      const fitness = this.calcFitness(chromosome, dataCenterIterator);
-      chromosome.setFitness(fitness);
-    }
-  }
+  tasks.forEach((task, i) => {
+    if (i >= individual.chromosome.length) return;
+    
+    const worker = individual.chromosome[i];
+    const mips = WEIGHT_TO_MIPS[task.weight] || 500;
+    const execTime = CLOUDLET_LENGTH / mips; // cloudletLength diasumsikan 10.000
+    const cost = (execTime * COST_PER_MIPS) + (RAM_USAGE * COST_PER_RAM) + (BANDWIDTH_USAGE * COST_PER_BW);
+    
+    workerLoad[worker] = (workerLoad[worker] || 0) + execTime;
+    workerCost[worker] = (workerCost[worker] || 0) + cost;
+  });
   
-  /**
-   * Calculate fitness for a chromosome
-   * @param {Chromosome} chromosome - The chromosome
-   * @param {number} dataCenterIterator - Index of the datacenter being processed
-   * @return {number} The fitness value
-   */
-  calcFitness(chromosome, dataCenterIterator) {
-    // In our simplified case, we use a balancing metric instead of the cloud sim metrics
-    const counts = {};
-    const genes = chromosome.getGenes();
-    
-    // Count tasks assigned to each worker
-    for (let gene of genes) {
-      counts[gene] = (counts[gene] || 0) + 1;
-    }
-    
-    const loads = Object.values(counts);
-    const maxLoad = Math.max(...loads);
-    const minLoad = Math.min(...loads);
-    
-    // Higher fitness for more balanced task distribution
-    return 1 / (maxLoad - minLoad + 1);
-  }
+  const makespan = Object.values(workerLoad).length > 0 
+    ? Math.max(...Object.values(workerLoad)) 
+    : Infinity;
   
-  /**
-   * Select a pair of chromosomes using tournament selection
-   * @param {PopulationGA} population - The population
-   * @return {Array<Chromosome>} Two selected parent chromosomes
-   */
-  selectParents(population) {
-    const chromosomes = population.getChromosomes();
-    const parents = new Array(2);
+  const totalCost = Object.values(workerCost).reduce((a, b) => a + b, 0);
+  
+  // Store these values for potential future use
+  individual._makespan = makespan;
+  individual._cost = totalCost;
+  
+  // Convert to a single fitness value (higher is better)
+  // Use inverse because lower makespan and cost are better
+  const makespanFitness = 1.0 / (makespan + 1); // Adding 1 to avoid division by zero
+  const costFitness = 1.0 / (totalCost + 0.1); // Adding 0.1 to avoid division by zero
+  
+  // Combined fitness - higher is better
+  return makespanFitness + costFitness;
+}
+
+/**
+ * Tournament selection to choose parents
+ * @param {Array} population - Current population
+ * @return {Array} Two selected parents
+ */
+function selectParents(population) {
+  const parents = [];
+  
+  for (let i = 0; i < 2; i++) {
+    // Select 3 random individuals for tournament
+    let best = null;
+    let bestFitness = -Infinity;
     
-    // Tournament selection
-    for (let i = 0; i < 2; i++) {
-      // Select 3 random chromosomes for tournament
-      let best = null;
-      let bestFitness = -Infinity;
+    for (let j = 0; j < 3; j++) {
+      const index = Math.floor(Math.random() * population.length);
+      const candidate = population[index];
       
-      for (let j = 0; j < 3; j++) {
-        const index = Math.floor(Math.random() * chromosomes.length);
-        const candidate = chromosomes[index];
-        
-        if (candidate.getFitness() > bestFitness) {
-          bestFitness = candidate.getFitness();
-          best = candidate;
-        }
-      }
-      
-      parents[i] = best;
-    }
-    
-    return parents;
-  }
-  
-  /**
-   * Apply crossover operation on selected parents
-   * @param {Chromosome} parent1 - First parent
-   * @param {Chromosome} parent2 - Second parent
-   * @return {Array<Chromosome>} Two offspring chromosomes
-   */
-  crossover(parent1, parent2) {
-    const offspring = [
-      new Chromosome(parent1.getChromosomeLength()),
-      new Chromosome(parent2.getChromosomeLength())
-    ];
-    
-    offspring[0].setId(parent1.getId());
-    offspring[1].setId(parent2.getId());
-    
-    // Apply crossover with probability
-    if (Math.random() < this.crossoverProbability) {
-      // Single-point crossover
-      const crossoverPoint = Math.floor(Math.random() * parent1.getChromosomeLength());
-      
-      // Copy genes from parents to offspring
-      for (let i = 0; i < parent1.getChromosomeLength(); i++) {
-        if (i < crossoverPoint) {
-          offspring[0].setGene(i, parent1.getGene(i));
-          offspring[1].setGene(i, parent2.getGene(i));
-        } else {
-          offspring[0].setGene(i, parent2.getGene(i));
-          offspring[1].setGene(i, parent1.getGene(i));
-        }
-      }
-    } else {
-      // No crossover, copy parents directly
-      for (let i = 0; i < parent1.getChromosomeLength(); i++) {
-        offspring[0].setGene(i, parent1.getGene(i));
-        offspring[1].setGene(i, parent2.getGene(i));
+      if (candidate.fitness > bestFitness) {
+        bestFitness = candidate.fitness;
+        best = candidate;
       }
     }
     
-    return offspring;
+    parents.push(best);
   }
   
-  /**
-   * Apply mutation operation on offspring
-   * @param {Chromosome} offspring - The offspring to mutate
-   * @param {number} dataCenterIterator - Index of the datacenter being processed
-   */
-  mutate(offspring, dataCenterIterator) {
-    // Apply mutation with probability for each gene
-    for (let i = 0; i < offspring.getChromosomeLength(); i++) {
-      if (Math.random() < this.mutationProbability) {
-        // Generate a new random value for the gene
-        const minPosition = (dataCenterIterator - 1) * 9;
-        const maxPosition = (dataCenterIterator * 9) - 1;
-        const newValue = minPosition + Math.floor(Math.random() * (maxPosition - minPosition + 1));
-        offspring.setGene(i, newValue);
+  return parents;
+}
+
+/**
+ * Perform crossover between two parents
+ * @param {Object} parent1 - First parent
+ * @param {Object} parent2 - Second parent
+ * @param {number} crossoverProbability - Probability of crossover
+ * @return {Array} Two offspring
+ */
+function crossover(parent1, parent2, crossoverProbability) {
+  const offspring = [
+    { chromosome: [...parent1.chromosome], fitness: Infinity },
+    { chromosome: [...parent2.chromosome], fitness: Infinity }
+  ];
+  
+  if (Math.random() < crossoverProbability) {
+    // Single-point crossover
+    const crossoverPoint = Math.floor(Math.random() * parent1.chromosome.length);
+    
+    for (let i = 0; i < parent1.chromosome.length; i++) {
+      if (i < crossoverPoint) {
+        offspring[0].chromosome[i] = parent1.chromosome[i];
+        offspring[1].chromosome[i] = parent2.chromosome[i];
+      } else {
+        offspring[0].chromosome[i] = parent2.chromosome[i];
+        offspring[1].chromosome[i] = parent1.chromosome[i];
       }
     }
   }
   
-  /**
-   * Run the genetic algorithm
-   * @param {PopulationGA} population - The initial population
-   * @param {number} dataCenterIterator - Index of the datacenter being processed
-   */
-  runGA(population, dataCenterIterator) {
-    let iteration = 0;
+  return offspring;
+}
+
+/**
+ * Apply mutation to an individual
+ * @param {Object} individual - Individual to mutate
+ * @param {number} workerCount - Number of workers
+ * @param {number} mutationProbability - Probability of mutation
+ */
+function mutate(individual, workerCount, mutationProbability) {
+  for (let i = 0; i < individual.chromosome.length; i++) {
+    if (Math.random() < mutationProbability) {
+      individual.chromosome[i] = Math.floor(Math.random() * workerCount);
+    }
+  }
+}
+
+/**
+ * Run the Genetic Algorithm for task scheduling
+ * @param {number} taskCount - Number of tasks
+ * @param {number} workerCount - Number of workers
+ * @param {Array} tasks - Array of tasks with their properties (REQUIRED)
+ * @param {Object} options - Optional parameters
+ * @return {Array} Best solution found
+ * @throws {Error} If tasks are not provided
+ */
+function runGeneticAlgorithm(taskCount, workerCount, tasks, options = {}) {
+  // Validate tasks parameter - REQUIRED
+  if (!tasks) {
+    throw new Error("Tasks array is required for genetic algorithm");
+  }
+  
+  if (!Array.isArray(tasks)) {
+    throw new Error("Tasks must be an array");
+  }
+  
+  if (tasks.length === 0) {
+    throw new Error("Tasks array cannot be empty");
+  }
+  
+  if (tasks.length !== taskCount) {
+    console.warn(`Warning: Task count (${taskCount}) does not match tasks array length (${tasks.length}). Using tasks length.`);
+    taskCount = tasks.length;
+  }
+
+  const {
+    populationSize = DEFAULT_POPULATION_SIZE,
+    iterations = DEFAULT_ITERATIONS,
+    crossoverProbability = DEFAULT_CROSSOVER_PROBABILITY,
+    mutationProbability = DEFAULT_MUTATION_PROBABILITY
+  } = options;
+
+  // Initialize population
+  let population = createInitialPopulation(populationSize, taskCount, workerCount);
+  
+  // Evaluate initial population
+  population.forEach(ind => {
+    ind.fitness = calculateFitness(ind, tasks);
+  });
+
+  let bestSolution = null;
+  let bestFitness = -Infinity;
+
+  // Main GA loop
+  for (let iter = 0; iter < iterations; iter++) {
+    const newPopulation = [];
     
-    // Compute initial fitness
-    this.computeFitness(population, dataCenterIterator);
+    // Elitism: Keep the best individual
+    population.sort((a, b) => b.fitness - a.fitness);
+    newPopulation.push(cloneDeep(population[0]));
     
-    // Main iteration loop
-    while (iteration < this.maxIterations) {
-      // Create a new population for the next generation
-      const newPopulation = [];
+    // Generate rest of new population
+    while (newPopulation.length < populationSize) {
+      // Select parents
+      const parents = selectParents(population);
       
-      // Elitism: Keep the best chromosome
-      population.sortByFitness();
-      newPopulation.push(population.getChromosome(0).clone());
+      // Apply crossover
+      const offspring = crossover(parents[0], parents[1], crossoverProbability);
       
-      // Generate the rest of the new population
-      while (newPopulation.length < population.getPopulationSize()) {
-        // Select parents
-        const parents = this.selectParents(population);
-        
-        // Apply crossover
-        const offspring = this.crossover(parents[0], parents[1]);
-        
-        // Apply mutation
-        this.mutate(offspring[0], dataCenterIterator);
-        this.mutate(offspring[1], dataCenterIterator);
-        
-        // Add offspring to new population
-        newPopulation.push(offspring[0]);
-        if (newPopulation.length < population.getPopulationSize()) {
-          newPopulation.push(offspring[1]);
-        }
+      // Apply mutation
+      mutate(offspring[0], workerCount, mutationProbability);
+      mutate(offspring[1], workerCount, mutationProbability);
+      
+      // Evaluate offspring
+      offspring[0].fitness = calculateFitness(offspring[0], tasks);
+      offspring[1].fitness = calculateFitness(offspring[1], tasks);
+      
+      // Add offspring to new population
+      newPopulation.push(offspring[0]);
+      if (newPopulation.length < populationSize) {
+        newPopulation.push(offspring[1]);
       }
-      
-      // Replace old population with new population
-      population.setChromosomes(newPopulation);
-      
-      // Compute fitness for new population
-      this.computeFitness(population, dataCenterIterator);
-      
-      // Sort population by fitness
-      population.sortByFitness();
-      
-      // Update global best if necessary
-      const dcIndex = dataCenterIterator - 1;
-      if (population.getChromosome(0).getFitness() > this.globalBestFitnesses[dcIndex]) {
-        this.globalBestFitnesses[dcIndex] = population.getChromosome(0).getFitness();
-        this.globalBestPositions[dcIndex] = [...population.getChromosome(0).getGenes()];
-      }
-      
-      // Increment iteration counter
-      iteration++;
+    }
+    
+    // Replace old population
+    population = newPopulation;
+    
+    // Update best solution
+    const currentBest = population.reduce((best, current) => 
+      current.fitness > best.fitness ? current : best
+    );
+    
+    if (currentBest.fitness > bestFitness) {
+      bestFitness = currentBest.fitness;
+      bestSolution = cloneDeep(currentBest);
     }
   }
   
-  /**
-   * Get the best VM allocation for a datacenter
-   * @param {number} dataCenterIterator - Index of the datacenter
-   * @return {Array<number>} The best VM allocation
-   */
-  getBestVmAllocationForDatacenter(dataCenterIterator) {
-    return this.globalBestPositions[dataCenterIterator - 1];
-  }
-  
-  /**
-   * Get the best fitness for a datacenter
-   * @param {number} dataCenterIterator - Index of the datacenter
-   * @return {number} The best fitness
-   */
-  getBestFitnessForDatacenter(dataCenterIterator) {
-    return this.globalBestFitnesses[dataCenterIterator - 1];
-  }
+  return bestSolution.chromosome;
 }
 
 /**
  * Legacy function to maintain compatibility with the BAT algorithm pattern
+ * This function is now deprecated - use runGeneticAlgorithm directly
  * @param {Array} population - Initial population
  * @param {number} iterations - Maximum number of iterations
+ * @param {Array} tasks - REQUIRED: Task information including weights
  * @return {Array<number>} Best position found
+ * @throws {Error} If tasks are not provided
  */
-function geneticAlgorithm(population, iterations) {
-  const populationSize = population.length;
-  const taskCount = population[0].position.length;
-  
-  // Convert BAT-style population to GA-style chromosomes
-  const gaPopulation = new PopulationGA(populationSize, taskCount, 1);
-  const chromosomes = [];
-  
-  for (let i = 0; i < populationSize; i++) {
-    const chromosome = new Chromosome(taskCount);
-    chromosome.setId(i);
-    chromosome.setGenes([...population[i].position]);
-    chromosomes.push(chromosome);
+function geneticAlgorithm(population, iterations, tasks) {
+  if (!tasks || !Array.isArray(tasks)) {
+    throw new Error("Tasks array is required for genetic algorithm. The legacy geneticAlgorithm function no longer creates simulated tasks.");
   }
   
-  gaPopulation.setChromosomes(chromosomes);
+  const taskCount = population[0].position.length;
+  const workerCount = Math.max(...population[0].position) + 1;
   
-  // Run the GA
-  const ga = new GeneticAlgorithm(iterations, populationSize, 0.8, 0.1, taskCount);
-  ga.runGA(gaPopulation, 1);
-  
-  // Return the best position
-  return ga.getBestVmAllocationForDatacenter(1);
+  return runGeneticAlgorithm(taskCount, workerCount, tasks, { iterations });
 }
 
 module.exports = { 
-  GeneticAlgorithm,
+  runGeneticAlgorithm,
   geneticAlgorithm
 }; 
