@@ -59,9 +59,10 @@ function calculateFitness(individual, tasks) {
   const totalCost = Object.values(workerCost).reduce((a, b) => a + b, 0);
 
   // Gabungkan makespan dan cost dalam satu nilai fitness
-  const w1 = 0.6; // bobot untuk makespan
-  const w2 = 0.4; // bobot untuk cost
-  individual.fitness = w1 * makespan + w2 * totalCost;
+//   const w1 = 0.6; // bobot untuk makespan
+//   const w2 = 0.4; // bobot untuk cost
+//   individual.fitness = w1 * makespan + w2 * totalCost;
+  individual.fitness = makespan + totalCost;
   return individual.fitness;
 }
 
