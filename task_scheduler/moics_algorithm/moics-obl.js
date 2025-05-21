@@ -93,6 +93,22 @@ function abandonWorst(population, pa, workerCount) {
   return sorted;
 }
 
+function applyOBL(population, workerCount, tasks) {
+  const minVM = 0;
+  const maxVM = workerCount - 1;
+
+  for (let ind of population) {
+    const oppChrom = ind.chromosome.map(g => minVM + maxVM - g);
+    const opposite = { chromosome: oppChrom, fitnessValues: [Infinity, Infinity] };
+    estimateFitness(opposite, tasks);
+
+    if ((opposite.fitnessValues[0] + opposite.fitnessValues[1]) < (ind.fitnessValues[0] + ind.fitnessValues[1])) {
+      ind.chromosome = oppChrom;
+      ind.fitnessValues = opposite.fitnessValues;
+    }
+  }
+}
+
 function runMoicsAlgorithm(taskCount, workerCount, tasks, iterations = 50, popSize = 30, pa = 0.25) {
   let population = createInitialPopulation(popSize, taskCount, workerCount);
 
@@ -118,6 +134,9 @@ function runMoicsAlgorithm(taskCount, workerCount, tasks, iterations = 50, popSi
 
     // Re-evaluate
     population.forEach(ind => estimateFitness(ind, tasks));
+
+    // Tambahkan OBL 
+    applyOBL(population, workerCount, tasks);
   }
 
   // Ambil satu solusi dari pareto front

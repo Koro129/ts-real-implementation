@@ -17,3 +17,5 @@ function generatePopulation(popSize, taskCount, workerCount) {
 
   return population;
 }
+
+module.exports = { generatePopulation };

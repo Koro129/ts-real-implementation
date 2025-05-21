@@ -2,13 +2,11 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { runBatAlgorithm } = require('./bat_algorithm/bat');
-// const { runMOICS } = require('./moics/runMOICS')
+const { runMoicsAlgorithm } = require('./moics_algorithm/moics-obl');
 
 const app = express();
 app.use(express.json());
 
-// Daftar IP:PORT worker
 const workers = [
   'http://192.168.56.11:31001',
   'http://192.168.56.11:31002',
@@ -18,66 +16,65 @@ const workers = [
   'http://192.168.56.13:31002'
 ];
 
-// Round Robin Disabled
-// let currentWorker = 0;
-
 let makespanStart = null;
 let makespanEnd = null;
 let completedTasks = 0;
-const totalTasks = 50;
+const totalTasks = 1000;
 let currentIndex = 0;
 let totalCost = 0;
 
 const startTimes = [];
 const finishTimes = [];
 const executionTimes = [];
+const cpuUsages = []; 
+const waitingTimes = [];
 const executionTimeByWorker = {};
 
 let tasks = [];
-let baMapping = []; // 🔄 Hasil Bat Algorithm: mapping index task -> index worker
 let moicsMapping = [];
 
-// Load tasks
 try {
-  const data = fs.readFileSync(path.join(__dirname, 'tasks500.json'));
+  const data = fs.readFileSync(path.join(__dirname, 'tasks1000.json'));
   tasks = JSON.parse(data);
 } catch (err) {
   console.error('Gagal membaca tasks.json:', err.message);
   process.exit(1);
 }
 
-// Endpoint penjadwalan menggunakan Bat Algorithm
-app.post('/schedule', async (req, res) => {
-  // Jalankan Bat Algorithm saat pertama kali
-  if (baMapping.length === 0) {
-    baMapping = runBatAlgorithm(tasks.length, workers.length); // 🔄 Menjalankan Bat Algorithm untuk mapping
-    console.log('📌 Bat Algorithm mapping:', baMapping);
+app.post('/cpu-usage-report', (req, res) => {
+  const { host, avgCpu } = req.body;
+  cpuUsages.push({ time: Date.now(), host, avgCpu });
+  res.json({ status: 'received' });
+});
 
-    // Debug jika mapping kosong
-    if (!Array.isArray(baMapping) || baMapping.length !== tasks.length) {
-      console.error(`❌ Invalid mapping: expected ${tasks.length} entries, got ${baMapping.length}`);
+app.post('/schedule', async (req, res) => {
+  if (currentIndex === 0) {
+    cpuUsages.length = 0;
+  }
+
+  if (moicsMapping.length === 0) {
+    moicsMapping = runMoicsAlgorithm(tasks.length, workers.length, tasks);
+    console.log('📌 MOICS Mapping:', moicsMapping);
+
+    if (!Array.isArray(moicsMapping) || moicsMapping.length !== tasks.length) {
+      console.error(`❌ Invalid MOICS mapping`);
       process.exit(1);
     }
   }
 
   if (currentIndex >= tasks.length) {
-    return res.status(400).json({
-      error: 'Semua task telah selesai dijalankan'
-    });
+    return res.status(400).json({ error: 'Semua task telah selesai dijalankan' });
   }
 
   const task = tasks[currentIndex];
-  const targetIndex = baMapping[currentIndex]; // 🔄 Alokasi berdasarkan Bat Algorithm
+  const targetIndex = moicsMapping[currentIndex];
   const targetWorker = workers[targetIndex];
   currentIndex++;
 
-  if (!makespanStart) {
-    makespanStart = Date.now();
-  }
+  if (!makespanStart) makespanStart = Date.now();
 
   try {
-    // Menambahkan informasi task yang akan diproses
-    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.type }); // Mengirim task berdasarkan type
+    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.weight });
 
     const workerURL = targetWorker;
     const startTime = response.data?.result?.start_time || 0;
@@ -91,6 +88,7 @@ app.post('/schedule', async (req, res) => {
     startTimes.push(startTime);
     finishTimes.push(finishTime);
     executionTimes.push(execTime);
+    waitingTimes.push(startTime - makespanStart);
 
     if (!executionTimeByWorker[workerURL]) {
       executionTimeByWorker[workerURL] = 0;
@@ -116,14 +114,36 @@ app.post('/schedule', async (req, res) => {
       const Tmin = Math.min(...allExecs);
       const imbalanceDegree = (Tmax - Tmin) / Tavg;
 
-      console.log(`✅ All tasks completed.`);
+      // Hitung Resource Utilization
+      const grouped = {};
+      cpuUsages.forEach(entry => {
+        if (!grouped[entry.host]) grouped[entry.host] = [];
+        grouped[entry.host].push(entry.avgCpu);
+      });
+
+      let ruSum = 0;
+      let ruCount = 0;
+      for (const host in grouped) {
+        const hostAvg = grouped[host].reduce((a, b) => a + b, 0) / grouped[host].length;
+        ruSum += hostAvg;
+        ruCount++;
+      }
+
+      const resourceUtilization = ruCount > 0 ? ruSum / ruCount : 0;
+
+      const totalWaiting = waitingTimes.reduce((a, b) => a + b, 0);
+      const avgWaitingTime = totalWaiting / totalTasks;
+
+      console.log(`✅ All tasks completed with MOICS OBL.`);
       console.log(`🕒 Makespan: ${makespanDurationSec.toFixed(2)} detik`);
+      console.log(`💲 Total Cost: $${totalCost.toFixed(2)}`);
       console.log(`📈 Throughput: ${throughput.toFixed(2)} tugas/detik`);
-      console.log(`📊 Average Start Time: ${avgStart.toFixed(2)} ms`);
-      console.log(`📊 Average Finish Time: ${avgFinish.toFixed(2)} ms`);
-      console.log(`📊 Average Execution Time: ${avgExec.toFixed(2)} ms`);
+      console.log(`⏱️ Avg Waiting Time: ${avgWaitingTime.toFixed(6)} ms`);
+      console.log(`💡 Resource Utilization: ${resourceUtilization.toFixed(4)}%`);
+      console.log(`📊 Avg Start: ${avgStart.toFixed(2)} ms`);
+      console.log(`📊 Avg Finish: ${avgFinish.toFixed(2)} ms`);
+      console.log(`📊 Avg Exec Time: ${avgExec.toFixed(2)} ms`);
       console.log(`⚖️ Imbalance Degree: ${imbalanceDegree.toFixed(3)}`);
-      console.log(`💲 Total Cost: $${totalCost}`);
     }
 
     res.json({
@@ -135,7 +155,7 @@ app.post('/schedule', async (req, res) => {
     });
 
   } catch (err) {
-    console.error(`Gagal mengirim task ke ${targetWorker}:`, err.message);
+    console.error(`❌ Gagal kirim task ke ${targetWorker}:`, err.message);
     res.status(500).json({
       error: 'Worker unreachable',
       worker: targetWorker,
@@ -150,17 +170,19 @@ app.post('/reset', (req, res) => {
   completedTasks = 0;
   makespanStart = null;
   makespanEnd = null;
-  baMapping = [];
   moicsMapping = [];
   startTimes.length = 0;
   finishTimes.length = 0;
   executionTimes.length = 0;
   totalCost = 0;
+  const cpuUsages = []; 
+  cpuUsages.length = 0;
+  waitingTimes.length = 0;
   for (let key in executionTimeByWorker) delete executionTimeByWorker[key];
 
   res.json({ status: 'reset done' });
 });
 
 app.listen(8080, () => {
-  console.log('🚀 Broker running on port 8080 (BAT ALGORITHM ENABLED)');
+  console.log('🚀 Broker running on port 8080 (MOICS OBL ENABLED)');
 });
