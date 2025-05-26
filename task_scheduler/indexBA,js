@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { runChoaAlgorithm } = require('./choa_algorithm/choa'); // Make sure this path matches the location of choa.js
+const { runBatAlgorithm } = require('./bat_algorithm/ba-obl'); // Make sure this path matches the location of ba.js
 
 const app = express();
 app.use(express.json());
@@ -31,7 +31,7 @@ const waitingTimes = [];
 const executionTimeByWorker = {};
 
 let tasks = [];
-let choaMapping = [];
+let baMapping = [];
 
 try {
   const data = fs.readFileSync(path.join(__dirname, 'tasks1000.json'));
@@ -52,12 +52,12 @@ app.post('/schedule', async (req, res) => {
     cpuUsages.length = 0;
   }
 
-  if (choaMapping.length === 0) {
-    choaMapping = runChoaAlgorithm(tasks.length, workers.length, tasks);
-    console.log('📌 ChOA Mapping:', choaMapping);
+  if (baMapping.length === 0) {
+    baMapping = runBatAlgorithm(tasks.length, workers.length, tasks);
+    console.log('📌 BA Mapping:', baMapping);
 
-    if (!Array.isArray(choaMapping) || choaMapping.length !== tasks.length) {
-      console.error('❌ Invalid ChOA mapping');
+    if (!Array.isArray(baMapping) || baMapping.length !== tasks.length) {
+      console.error('❌ Invalid BA mapping');
       process.exit(1);
     }
   }
@@ -67,7 +67,7 @@ app.post('/schedule', async (req, res) => {
   }
 
   const task = tasks[currentIndex];
-  const targetIndex = choaMapping[currentIndex];
+  const targetIndex = baMapping[currentIndex];
   const targetWorker = workers[targetIndex];
   currentIndex++;
 
@@ -133,7 +133,7 @@ app.post('/schedule', async (req, res) => {
       const totalWaiting = waitingTimes.reduce((a, b) => a + b, 0);
       const avgWaitingTime = totalWaiting / totalTasks;
 
-      console.log(`✅ All tasks completed with ChOA-OBL.`);
+      console.log(`✅ All tasks completed with BA-OBL.`);
       console.log(`🕒 Makespan: ${makespanDurationSec.toFixed(2)} seconds`);
       console.log(`💲 Total Cost: $${totalCost.toFixed(2)}`);
       console.log(`📈 Throughput: ${throughput.toFixed(2)} tasks/sec`);
@@ -169,7 +169,7 @@ app.post('/reset', (req, res) => {
   completedTasks = 0;
   makespanStart = null;
   makespanEnd = null;
-  choaMapping = [];
+  baMapping = [];
   startTimes.length = 0;
   finishTimes.length = 0;
   executionTimes.length = 0;
@@ -182,5 +182,5 @@ app.post('/reset', (req, res) => {
 });
 
 app.listen(8080, () => {
-  console.log('🚀 Broker running on port 8080 (ChOA-OBL ENABLED)');
+  console.log('🚀 Broker running on port 8080 (BA-OBL ENABLED)');
 });
