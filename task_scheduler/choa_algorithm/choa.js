@@ -7,6 +7,16 @@ const WEIGHT_TO_MIPS = {
   berat: 600,
 };
 
+// VM specifications for real environment
+const VM_SPECS = [
+  { id: 1, ram: 512, cpu: 1, port: 31001, mips: 1000 },
+  { id: 2, ram: 1024, cpu: 2, port: 31002, mips: 2000 },
+  { id: 3, ram: 512, cpu: 1, port: 31003, mips: 1000 },
+  { id: 4, ram: 1024, cpu: 2, port: 31004, mips: 2000 },
+  { id: 5, ram: 512, cpu: 1, port: 31005, mips: 1000 },
+  { id: 6, ram: 1024, cpu: 2, port: 31006, mips: 2000 },
+];
+
 // Estimasi biaya (arbitrary unit)
 const COST_PER_MIPS = 0.5;
 const COST_PER_RAM = 0.05;
@@ -19,7 +29,9 @@ function getRandomInt(min, max) {
 
 // Fungsi untuk menginisialisasi individu (chromosome)
 function createIndividual(taskCount, workerCount) {
-  const chromosome = Array.from({ length: taskCount }, () => getRandomInt(0, workerCount - 1));
+  // Ensure we don't assign to non-existent VMs
+  const maxValidWorker = Math.min(workerCount - 1, VM_SPECS.length - 1);
+  const chromosome = Array.from({ length: taskCount }, () => getRandomInt(0, maxValidWorker));
   return {
     chromosome,
     fitness: Infinity,
@@ -47,9 +59,15 @@ function calculateFitness(individual, tasks) {
 
   tasks.forEach((task, i) => {
     const worker = individual.chromosome[i];
-    const mips = WEIGHT_TO_MIPS[task.weight] || 500;
-    const execTime = 10000 / mips; // cloudletLength diasumsikan 10.000
-    const cost = (execTime * COST_PER_MIPS) + (512 * COST_PER_RAM) + (BANDWIDTH_USAGE * COST_PER_BW);
+    const vmSpec = VM_SPECS[worker % VM_SPECS.length]; // Get VM specs for the worker
+    const taskMips = WEIGHT_TO_MIPS[task.weight] || 500;
+    
+    // Execution time based on VM's MIPS capacity and CPU cores
+    const vmMips = vmSpec.mips * vmSpec.cpu; // Adjust MIPS by CPU cores
+    const execTime = 10000 / vmMips; // cloudletLength diasumsikan 10.000
+    
+    // Cost calculation based on actual VM specs
+    const cost = (execTime * COST_PER_MIPS) + (vmSpec.ram * COST_PER_RAM) + (BANDWIDTH_USAGE * COST_PER_BW);
 
     workerLoad[worker] = (workerLoad[worker] || 0) + execTime;
     workerCost[worker] = (workerCost[worker] || 0) + cost;
@@ -108,6 +126,7 @@ function updateFandCoefficients(iter, iterations) {
 function updatePositions(population, taskCount, workerCount, coefficients, attacker, barrier, chaser, driver, tasks) {
   const { f, C1G1, C2G1, C1G2, C2G2, C1G3, C2G3, C1G4, C2G4 } = coefficients;
   const m = chaos(); // Chaotic multiplier
+  const maxValidWorker = Math.min(workerCount - 1, VM_SPECS.length - 1);
   
   for (const chimp of population) {
     const newChromosome = [];
@@ -155,8 +174,8 @@ function updatePositions(population, taskCount, workerCount, coefficients, attac
       // Calculate new position
       let newPosition = Math.round((X1 + X2 + X3 + X4) / 4.0);
       
-      // Ensure within bounds
-      newPosition = Math.max(0, Math.min(workerCount - 1, newPosition));
+      // Ensure within bounds - using maxValidWorker to stay within VM specs
+      newPosition = Math.max(0, Math.min(maxValidWorker, newPosition));
       
       newChromosome.push(newPosition);
     }
@@ -224,6 +243,60 @@ function evaluateFitness(population, tasks, currentBests) {
   };
 }
 
+// Fungsi untuk mendapatkan informasi VM untuk penugasan spesifik
+function getVMForAssignment(workerIndex) {
+  return VM_SPECS[workerIndex % VM_SPECS.length];
+}
+
+// Fungsi untuk mendapatkan statistik detail dari solusi penjadwalan
+function getSchedulingStatistics(assignments, tasks) {
+  const vmLoads = {};
+  const vmCosts = {};
+  const taskAssignments = [];
+  
+  // Initialize VM loads and costs
+  VM_SPECS.forEach((vm, index) => {
+    vmLoads[index] = 0;
+    vmCosts[index] = 0;
+  });
+  
+  // Calculate statistics
+  assignments.forEach((workerIndex, taskIndex) => {
+    const task = tasks[taskIndex];
+    const vmIndex = workerIndex % VM_SPECS.length;
+    const vm = VM_SPECS[vmIndex];
+    
+    const taskMips = WEIGHT_TO_MIPS[task.weight] || 500;
+    const vmMips = vm.mips * vm.cpu;
+    const execTime = 10000 / vmMips;
+    const cost = (execTime * COST_PER_MIPS) + (vm.ram * COST_PER_RAM) + (BANDWIDTH_USAGE * COST_PER_BW);
+    
+    vmLoads[vmIndex] += execTime;
+    vmCosts[vmIndex] += cost;
+    
+    taskAssignments.push({
+      taskId: taskIndex,
+      taskWeight: task.weight,
+      vmId: vm.id,
+      vmSpecs: vm,
+      executionTime: execTime,
+      cost: cost
+    });
+  });
+  
+  // Calculate overall statistics
+  const makespan = Math.max(...Object.values(vmLoads));
+  const totalCost = Object.values(vmCosts).reduce((a, b) => a + b, 0);
+  
+  return {
+    makespan,
+    totalCost,
+    vmLoads,
+    vmCosts,
+    taskAssignments
+  };
+}
+
 // Fungsi utama ChOA algorithm
 function runChoaAlgorithm(taskCount, workerCount, tasks, iterations = 5, populationSize = 80, useOBL = true) {
   // Initialize parameters
@@ -268,8 +341,14 @@ function runChoaAlgorithm(taskCount, workerCount, tasks, iterations = 5, populat
     driver = newTopChimps.driver;
   }
   
-  // Return the best solution (attacker's chromosome)
-  return attacker.chromosome;
+  // Get detailed statistics about the solution
+  const statistics = getSchedulingStatistics(attacker.chromosome, tasks);
+  
+  // Return the best solution (attacker's chromosome) and statistics
+  return {
+    assignments: attacker.chromosome,
+    statistics: statistics
+  };
 }
 
-module.exports = { runChoaAlgorithm }; 
+module.exports = { runChoaAlgorithm, getVMForAssignment, VM_SPECS }; 
