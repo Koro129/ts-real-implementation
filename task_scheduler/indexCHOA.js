@@ -2,18 +2,19 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { runChoaAlgorithm } = require('./choa_algorithm/choa'); // Make sure this path matches the location of choa.js
+const { runChoaAlgorithm, getWorkerSpec, WORKER_SPECS } = require('./choa_algorithm/choa'); // Updated import
 
 const app = express();
 app.use(express.json());
 
+// Define workers with their URLs
 const workers = [
-  'http://192.168.56.11:31001',
-  'http://192.168.56.11:31002',
-  'http://192.168.56.12:31001',
-  'http://192.168.56.12:31002',
-  'http://192.168.56.13:31001',
-  'http://192.168.56.13:31002'
+  'http://192.168.56.11:31001', // VM 1
+  'http://192.168.56.11:31002', // VM 2
+  'http://192.168.56.12:31001', // VM 3
+  'http://192.168.56.12:31002', // VM 4
+  'http://192.168.56.13:31001', // VM 5
+  'http://192.168.56.13:31002'  // VM 6
 ];
 
 let makespanStart = null;
@@ -53,6 +54,7 @@ app.post('/schedule', async (req, res) => {
   }
 
   if (choaMapping.length === 0) {
+    console.log('Running ChOA algorithm with worker specifications...');
     choaMapping = runChoaAlgorithm(tasks.length, workers.length, tasks);
     console.log('📌 ChOA Mapping:', choaMapping);
 
@@ -69,12 +71,15 @@ app.post('/schedule', async (req, res) => {
   const task = tasks[currentIndex];
   const targetIndex = choaMapping[currentIndex];
   const targetWorker = workers[targetIndex];
+  const workerSpec = getWorkerSpec(targetIndex);
   currentIndex++;
 
   if (!makespanStart) makespanStart = Date.now();
 
   try {
-    const response = await axios.post(`${targetWorker}/api/execute`, { task: task.weight });
+    const response = await axios.post(`${targetWorker}/api/execute`, { 
+      task: task.weight
+    });
 
     const workerURL = targetWorker;
     const startTime = response.data?.result?.start_time || 0;
@@ -182,5 +187,5 @@ app.post('/reset', (req, res) => {
 });
 
 app.listen(8080, () => {
-  console.log('🚀 Broker running on port 8080 (ChOA-OBL ENABLED)');
+  console.log('🚀 Broker running on port 8080 (ChOA-OBL with Worker Specifications ENABLED)');
 });
