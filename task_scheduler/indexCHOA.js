@@ -143,6 +143,36 @@ app.post('/schedule', async (req, res) => {
       console.log(`📊 Avg Finish: ${avgFinish.toFixed(2)} ms`);
       console.log(`📊 Avg Exec Time: ${avgExec.toFixed(2)} ms`);
       console.log(`⚖️ Imbalance Degree: ${imbalanceDegree.toFixed(3)}`);
+
+      // Save summary to CSV
+      const csvHeader = [
+        'Makespan (s)',
+        'Total Cost ($)',
+        'Throughput (tasks/sec)',
+        'Avg Waiting Time (ms)',
+        'Resource Utilization (%)',
+        'Avg Start (ms)',
+        'Avg Finish (ms)',
+        'Avg Exec Time (ms)',
+        'Imbalance Degree'
+      ].join(',') + '\n';
+
+      const csvRow = [
+        makespanDurationSec.toFixed(2),
+        totalCost.toFixed(2),
+        throughput.toFixed(2),
+        avgWaitingTime.toFixed(6),
+        resourceUtilization.toFixed(4),
+        avgStart.toFixed(2),
+        avgFinish.toFixed(2),
+        avgExec.toFixed(2),
+        imbalanceDegree.toFixed(3)
+      ].join(',') + '\n';
+
+      const csvPath = path.join(__dirname, 'choa_obl_results.csv');
+      let writeHeader = false;
+      if (!fs.existsSync(csvPath)) writeHeader = true;
+      fs.appendFileSync(csvPath, (writeHeader ? csvHeader : '') + csvRow);
     }
 
     res.json({
