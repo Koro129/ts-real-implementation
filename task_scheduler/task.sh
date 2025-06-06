@@ -14,11 +14,17 @@ echo "Reset complete."
 echo "Running 50 requests to $SCHEDULE_URL"
 echo "Logging output to $LOG_FILE"
 
-for i in $(seq 1 50)
+for run in $(seq 1 10)
 do
-  echo "[$i] Sending request..." | tee -a "$LOG_FILE"
-  curl -s -X POST "$SCHEDULE_URL" >> "$LOG_FILE"
-  echo -e "\n----------------------------------------\n" >> "$LOG_FILE"
+  echo "=== Run $run ===" | tee -a "$LOG_FILE"
+  for i in $(seq 1 50)
+  do
+    echo "[$i] Sending request..." | tee -a "$LOG_FILE"
+    curl -s -X POST "$SCHEDULE_URL" >> "$LOG_FILE"
+    echo -e "\n----------------------------------------\n" >> "$LOG_FILE"
+  done
+  echo "=== End of Run $run ===" | tee -a "$LOG_FILE"
+  echo -e "\n" >> "$LOG_FILE"
 done
 
 echo "Done. Output saved in $LOG_FILE"

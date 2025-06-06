@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { runChoaAlgorithm } = require('./choa_algorithm/choa'); // Make sure this path matches the location of choa.js
+const { runChoaAlgorithm } = require('./choa_algorithm/choa');
 
 const app = express();
 app.use(express.json());
@@ -26,9 +26,10 @@ let totalCost = 0;
 const startTimes = [];
 const finishTimes = [];
 const executionTimes = [];
-const cpuUsages = [];
+const cpuUsages = []; 
 const waitingTimes = [];
 const executionTimeByWorker = {};
+let lastFinishTime = 0; // Track the finish time of the last executed task
 
 let tasks = [];
 let choaMapping = [];
@@ -37,7 +38,7 @@ try {
   const data = fs.readFileSync(path.join(__dirname, 'tasks1000.json'));
   tasks = JSON.parse(data);
 } catch (err) {
-  console.error('Failed to read tasks.json:', err.message);
+  console.error('Gagal membaca tasks.json:', err.message);
   process.exit(1);
 }
 
@@ -50,6 +51,7 @@ app.post('/cpu-usage-report', (req, res) => {
 app.post('/schedule', async (req, res) => {
   if (currentIndex === 0) {
     cpuUsages.length = 0;
+    lastFinishTime = 0;
   }
 
   if (choaMapping.length === 0) {
@@ -57,13 +59,13 @@ app.post('/schedule', async (req, res) => {
     console.log('📌 ChOA Mapping:', choaMapping);
 
     if (!Array.isArray(choaMapping) || choaMapping.length !== tasks.length) {
-      console.error('❌ Invalid ChOA mapping');
+      console.error(`❌ Invalid ChOA mapping`);
       process.exit(1);
     }
   }
 
   if (currentIndex >= tasks.length) {
-    return res.status(400).json({ error: 'All tasks have been completed' });
+    return res.status(400).json({ error: 'Semua task telah selesai dijalankan' });
   }
 
   const task = tasks[currentIndex];
@@ -85,10 +87,27 @@ app.post('/schedule', async (req, res) => {
     const taskCost = execTime / 1000 * costPerMips;
     totalCost += taskCost;
 
-    startTimes.push(startTime);
-    finishTimes.push(finishTime);
+    // Store relative times from makespanStart
+    const relativeStartTime = startTime - makespanStart;
+    const relativeFinishTime = finishTime - makespanStart;
+
+    startTimes.push(relativeStartTime);
+    finishTimes.push(relativeFinishTime);
     executionTimes.push(execTime);
-    waitingTimes.push(startTime - makespanStart);
+
+    // Implement waiting time according to the journal
+    // For first task, waiting time is 0
+    // For subsequent tasks, waiting time is the time it waited for previous tasks
+    let waitingTime;
+    if (completedTasks === 0) {
+      waitingTime = 0;
+    } else {
+      waitingTime = lastFinishTime; // Time task had to wait from start of simulation
+    }
+    waitingTimes.push(waitingTime);
+    
+    // Update the last finish time (for next tasks' waiting time)
+    lastFinishTime = relativeFinishTime;
 
     if (!executionTimeByWorker[workerURL]) {
       executionTimeByWorker[workerURL] = 0;
@@ -114,6 +133,14 @@ app.post('/schedule', async (req, res) => {
       const Tmin = Math.min(...allExecs);
       const imbalanceDegree = (Tmax - Tmin) / Tavg;
 
+      // Calculate average waiting time according to journal
+      const totalWaitingTime = waitingTimes.reduce((a, b) => a + b, 0);
+      const avgWaitingTime = totalWaitingTime / totalTasks;
+
+      // Calculate scheduling length (total waiting time + makespan)
+      const schedulingLength = totalWaitingTime + (makespanEnd - makespanStart);
+
+      // Hitung Resource Utilization
       const grouped = {};
       cpuUsages.forEach(entry => {
         if (!grouped[entry.host]) grouped[entry.host] = [];
@@ -130,49 +157,17 @@ app.post('/schedule', async (req, res) => {
 
       const resourceUtilization = ruCount > 0 ? ruSum / ruCount : 0;
 
-      const totalWaiting = waitingTimes.reduce((a, b) => a + b, 0);
-      const avgWaitingTime = totalWaiting / totalTasks;
-
-      console.log(`✅ All tasks completed with ChOA-OBL.`);
-      console.log(`🕒 Makespan: ${makespanDurationSec.toFixed(2)} seconds`);
+      console.log(`✅ All tasks completed with ChOA OBL.`);
+      console.log(`🕒 Makespan: ${makespanDurationSec.toFixed(2)} detik`);
       console.log(`💲 Total Cost: $${totalCost.toFixed(2)}`);
-      console.log(`📈 Throughput: ${throughput.toFixed(2)} tasks/sec`);
-      console.log(`⏱️ Avg Waiting Time: ${avgWaitingTime.toFixed(6)} ms`);
+      console.log(`📈 Throughput: ${throughput.toFixed(2)} tugas/detik`);
+      console.log(`⏱️ Avg Waiting Time: ${avgWaitingTime.toFixed(2)} ms`);
       console.log(`💡 Resource Utilization: ${resourceUtilization.toFixed(4)}%`);
       console.log(`📊 Avg Start: ${avgStart.toFixed(2)} ms`);
       console.log(`📊 Avg Finish: ${avgFinish.toFixed(2)} ms`);
       console.log(`📊 Avg Exec Time: ${avgExec.toFixed(2)} ms`);
       console.log(`⚖️ Imbalance Degree: ${imbalanceDegree.toFixed(3)}`);
-
-      // Save summary to CSV
-      const csvHeader = [
-        'Makespan (s)',
-        'Total Cost ($)',
-        'Throughput (tasks/sec)',
-        'Avg Waiting Time (ms)',
-        'Resource Utilization (%)',
-        'Avg Start (ms)',
-        'Avg Finish (ms)',
-        'Avg Exec Time (ms)',
-        'Imbalance Degree'
-      ].join(',') + '\n';
-
-      const csvRow = [
-        makespanDurationSec.toFixed(2),
-        totalCost.toFixed(2),
-        throughput.toFixed(2),
-        avgWaitingTime.toFixed(6),
-        resourceUtilization.toFixed(4),
-        avgStart.toFixed(2),
-        avgFinish.toFixed(2),
-        avgExec.toFixed(2),
-        imbalanceDegree.toFixed(3)
-      ].join(',') + '\n';
-
-      const csvPath = path.join(__dirname, 'choa_obl_results.csv');
-      let writeHeader = false;
-      if (!fs.existsSync(csvPath)) writeHeader = true;
-      fs.appendFileSync(csvPath, (writeHeader ? csvHeader : '') + csvRow);
+      console.log(`📋 Scheduling Length: ${schedulingLength.toFixed(2)} ms`);
     }
 
     res.json({
@@ -184,7 +179,7 @@ app.post('/schedule', async (req, res) => {
     });
 
   } catch (err) {
-    console.error(`❌ Failed to send task to ${targetWorker}:`, err.message);
+    console.error(`❌ Gagal kirim task ke ${targetWorker}:`, err.message);
     res.status(500).json({
       error: 'Worker unreachable',
       worker: targetWorker,
@@ -204,6 +199,7 @@ app.post('/reset', (req, res) => {
   finishTimes.length = 0;
   executionTimes.length = 0;
   totalCost = 0;
+  const cpuUsages = []; 
   cpuUsages.length = 0;
   waitingTimes.length = 0;
   for (let key in executionTimeByWorker) delete executionTimeByWorker[key];
@@ -212,5 +208,5 @@ app.post('/reset', (req, res) => {
 });
 
 app.listen(8080, () => {
-  console.log('🚀 Broker running on port 8080 (ChOA-OBL ENABLED)');
+  console.log('🚀 Broker running on port 8080 (ChOA OBL ENABLED)');
 });
